@@ -2,6 +2,7 @@
 import socket
 import sys
 import re
+import datetime
 from threading import Thread
 
 '''
@@ -23,11 +24,32 @@ At the moment, the following actions are allowed
 4) List users registered in the network
    see
 
+5) Send a message to a registered user
+   send,<user>,<message>
+
+6) Read your receiveds messages
+   read - to get all your messages
+   read,<user> - to filter for a specific user
+
 '''
 
 NEWLINE = '\n'
+DELIMITER = ','
 users = {}
 logins = {}
+
+class Message:
+		
+	def __init__(self, sender, msg):
+		self.sender = sender
+		self.msg = msg
+		self.date = datetime.datetime.now()
+
+	def __str__(self):
+		body = "[" + str(self.date.date())
+		body += " " + str(self.date.hour) + ":" + str(self.date.minute) + "] "
+		body += self.sender + ": " + self.msg
+		return(body)
 
 class User:
 	
@@ -46,50 +68,109 @@ class User:
 		else:
 			return(False)
 
-	def newMessage(self, msg):
-		self.receivedMessages.append(msg)
+	def newMessage(self, sender, msg):
+		self.receivedMessages.append(Message(sender, msg))
 		return(True)
 
-def loggedActions(args):
+	def getMessages(self, sender=''):
+		if sender == '':
+			strMsgs = map(str, self.receivedMessages)
+		else:
+			strMsgs = [str(m) for m in self.receivedMessages if m.sender == sender]
+		
+		return(NEWLINE.join(strMsgs))
 
+def register(nickname, password, address):
+	if nickname in users:
+		returnValue = "nickname already in use"
+	elif address in logins:
+		returnValue = "you cannot register being logged"
+	else:
+		users[nickname] = User(nickname, password)
+		returnValue = "user " + nickname + " was registered"
+
+	return(returnValue)
+
+def login(nickname, password, address):
+	if nickname in users:
+		if address in logins and logins[address] == nickname:
+			returnValue = "user already logged"
+		elif users[nickname].validPassword(password):
+			logins[address] = nickname
+			returnValue = "logged in user"
+		else:
+			returnValue = "wrong data"
+	else:
+		returnValue = "wrong data"
+
+	return(returnValue)
+
+def logout(address):
+	if address in logins:
+		del logins[address]
+		returnValue = "logged out"
+	else:
+		returnValue = "you are already logged out"
+
+	return(returnValue)
+
+def see():
+	userl = list(users.keys())
+	userl.sort()
+	if len(userl) != 0:
+		returnValue = '\n'.join(userl)
+	else:
+		returnValue = "there are no users"
+
+	return(returnValue)
+
+def send(nickname, msg, address):
+	if nickname in users:
+		users[nickname].newMessage(logins[address], msg)
+		returnValue = "message send to " + nickname
+	else:
+		returnValue = nickname + " is not a registered user"
+	return(returnValue)
+
+def read(address, sender=''):
+	if sender != '':
+		returnValue = users[logins[address]].getMessages(sender=sender)
+	else:
+		returnValue = users[logins[address]].getMessages()
+	return(returnValue)
+
+def loggedActions(args, address):
+	
+	command = args[0]
 	returnValue = ""
 
-	if args[0] == 'see':
-		userl = list(users.keys())
-		userl.sort()
-		if len(userl) != 0:
-			returnValue = '\n'.join(userl)
+	if command == 'see':
+		returnValue = see()
+	elif command == 'send':
+		returnValue = send(args[1], args[2], address)
+	elif command == 'read':
+		if len(args) == 2:
+			returnValue = read(address, sender=args[1])
 		else:
-			returnValue = "there are no users"
+			returnValue = read(address)
 	else:
 		returnValue = "command not found"
 
 	return(returnValue)
 
 def evaluate(args, address):
-	print(args)
+	
+	command = args[0]
 	returnValue = ""
 
-	if args[0] == 'register':
-		users[args[1]] = User(args[1], args[2])
-		returnValue = "user " + args[1] + " was registered"
-	elif args[0] == 'login':
-		if args[1] in users:
-			if users[args[1]].validPassword(args[2]):
-				logins[address] = args[1]
-				returnValue = "logged in user"
-			else:
-				returnValue = "wrong data"
-		else:
-			returnValue = "wrong data"
-	elif args[0] == 'logout':
-		if address in logins:
-			del logins[address]
-			returnValue = "logged out"
-		else:
-			returnValue = "you are already logged out"
+	if command == 'register':
+		returnValue = register(args[1], args[2], address)
+	elif command == 'login':
+		returnValue = login(args[1], args[2], address)
+	elif command == 'logout':
+		returnValue = logout(address)
 	elif address in logins:
-		returnValue = loggedActions(args)
+		returnValue = loggedActions(args, address)
 	else:
 		returnValue = "command not found or require login"
 
@@ -101,9 +182,9 @@ def on_new_client(clientsocket, address):
 		dataBytes = clientsocket.recv(1024)
 		if not dataBytes: break
 		dataString = dataBytes.decode()
-		args = dataString.strip().split(',')
+		args = dataString.strip().split(DELIMITER)
+		print(address, args)
 		result = evaluate(args, address)
-		print(result)
 		clientsocket.sendall(result.encode())
 	clientsocket.close()
 
@@ -112,9 +193,9 @@ s = socket.socket()
 s.bind(('', port))
 
 s.listen(1)
+print("Esperando conexões na porta %s..." % port)
 
 while True:
-	print("Esperando conexões na porta %s..." % port)
 	conection, address = s.accept()
 	print("Cliente em %s:%s" % address)
 	Thread(target=on_new_client, args=(conection, address)).start() 
